@@ -1,0 +1,140 @@
+# all in 1: reddit, pinterest, instagram, tiktok, youtube
+import requests
+import base64
+import openpyxl
+from datetime import datetime
+
+# -----------------------------
+# DataForSEO API credentials
+# -----------------------------
+USERNAME = "username"
+PASSWORD = "PASSWORD"
+
+# Encode credentials for Basic Authentication
+auth_token = f"{USERNAME}:{PASSWORD}"
+encoded_token = base64.b64encode(auth_token.encode()).decode()
+
+SERP_API_ENDPOINT = "https://api.dataforseo.com/v3/serp/google/organic/live/advanced"
+HEADERS = {
+    "Authorization": f"Basic {encoded_token}",
+    "Content-Type": "application/json",
+}
+
+# -----------------------------
+# Fetch SERP items
+# -----------------------------
+def fetch_serp_items(keyword, location_code=20339, language_code="en", device="desktop", depth=100):
+    """
+    Call DataForSEO Google Organic Live Advanced and return the `items` list.
+    """
+    payload = [
+        {
+            "keyword": keyword,
+            "location_code": location_code,   # 20339 = England, United Kingdom
+            "language_code": language_code,
+            "device": device,
+            "depth": depth
+        }
+    ]
+
+    response = requests.post(SERP_API_ENDPOINT, headers=HEADERS, json=payload)
+    response.raise_for_status()
+    data = response.json()
+
+    task_info = data.get("tasks", [{}])[0]
+    if task_info.get("status_code") != 20000:
+        raise RuntimeError(f"API Error: {task_info.get('status_message')}")
+
+    results = task_info.get("result")
+    if not results:
+        return []
+
+    return results[0].get("items", [])
+
+
+# -----------------------------
+# Fill worksheet for each platform
+# -----------------------------
+def fill_platform_sheet(ws, base_keyword, platform_name, query_suffix, domain_match_fn):
+    """
+    For a given base keyword and platform:
+      - Run SERP lookup for 'base_keyword + query_suffix'
+      - Filter items to that platform's domain
+      - Write Title + URL into the provided worksheet
+    """
+    search_keyword = f"{base_keyword} {query_suffix}".strip()
+    print(f"\n🔍 Running SERP: {search_keyword} [{platform_name}]")
+
+    try:
+        items = fetch_serp_items(search_keyword)
+    except Exception as e:
+        print(f"❌ Error for {platform_name}: {e}")
+        return 0
+
+    # Excel headers
+    ws.append(["Title", "URL"])
+
+    count = 0
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+
+        title = item.get("title")
+        url = item.get("url")
+        domain = item.get("domain")
+
+        if not title or not url:
+            continue
+
+        # Filter to correct platform domain
+        if domain_match_fn(domain, url):
+            ws.append([title, url])
+            count += 1
+
+    print(f"✅ {platform_name}: {count} results added")
+    return count
+
+
+# -----------------------------
+# MAIN SCRIPT
+# -----------------------------
+if __name__ == "__main__":
+    base_keyword = input("Enter your base keyword: ").strip()
+
+    # Active platforms
+    platforms = {
+        "Reddit": (
+            "reddit",
+            lambda d, u: "reddit.com" in (d or "").lower() or "reddit.com" in (u or "").lower()
+        ),
+        "Pinterest": (
+            "pinterest",
+            lambda d, u: "pinterest." in (d or "").lower() or "pinterest." in (u or "").lower()
+        ),
+        "Instagram": (
+            "instagram",
+            lambda d, u: "instagram.com" in (d or "").lower() or "instagram.com" in (u or "").lower()
+        ),
+        "TikTok": (
+            "tiktok",
+            lambda d, u: "tiktok.com" in (d or "").lower() or "tiktok.com" in (u or "").lower()
+        ),
+        "YouTube": (
+            "youtube",
+            lambda d, u: "youtube.com" in (d or "").lower() or "youtube.com" in (u or "").lower()
+        ),
+    }
+
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)  # remove default sheet
+
+    for platform_name, (query_suffix, domain_match_fn) in platforms.items():
+        ws = wb.create_sheet(platform_name)
+        fill_platform_sheet(ws, base_keyword, platform_name, query_suffix, domain_match_fn)
+
+    date = datetime.now().strftime("%Y-%m-%d")
+    safe_keyword = base_keyword.replace(" ", "_")
+    filename = f"social_serp_export_{safe_keyword}_{date}.xlsx"
+    wb.save(filename)
+
+    print(f"\n📁 DONE! Exported all results to: {filename}\n")
