@@ -7,7 +7,7 @@ from datetime import datetime
 # -----------------------------
 # DataForSEO API credentials
 # -----------------------------
-USERNAME = "username"
+USERNAME = "USERNAME"
 PASSWORD = "PASSWORD"
 
 # Encode credentials for Basic Authentication
